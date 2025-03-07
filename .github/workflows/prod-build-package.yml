@@ -1,0 +1,118 @@
+name: Production Env - Build and package services to ghcr.io
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  service:
+    name: Build and Package
+    runs-on: ubuntu-latest
+    env:
+      DEV_REGISTRY: ghcr.io/rabellino/minfi-services
+    strategy:
+      fail-fast: true
+      matrix:
+        app:
+          - prod
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout UI code
+        uses: actions/checkout@v3
+
+      - name: Set ENV variables
+        shell: bash
+        run: |
+          DATE=$(git show -s --format=%cd --date=format:'%Y-%m-%d.%H:%M:%S.%z' ${{ github.sha }})
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            # PR build
+            echo "BRANCH=${GITHUB_HEAD_REF}" >> $GITHUB_ENV
+            echo "VERSION=dev-${{ github.sha }}-$DATE" >> $GITHUB_ENV
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            # Handle differences between branches/tags
+            if [[ "${GITHUB_REF}" == *"heads"* ]]; then
+              # Branch build
+              echo "BRANCH=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
+              echo "VERSION=dev-${{ github.sha }}-$DATE" >> $GITHUB_ENV
+            elif [[ "${GITHUB_REF}" == *"tags"* ]]; then
+              # Tag build
+              echo "BRANCH=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+              echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+            else
+              echo "ERROR: Unanticipated Git Ref"
+              exit 1
+            fi
+          else
+            echo "ERROR: Unanticipated GitHub Event"
+            exit 1
+          fi
+
+      - name: Create app names
+        env:
+          APP: '${{ matrix.app }}'
+        run: |
+          echo "APP_LOWERCASE=${APP,,}" >> $GITHUB_ENV
+
+      - name: Generate immutable tag so ArgoCD recognizes a diff
+        id: tag
+        run: |
+          # Get the current date-time in YYYYMMDDHHMMSS format
+          TIMESTAMP=$(date +"%Y%m%d%H%M%S")
+          echo "Generated tag: $TIMESTAMP"
+          # Store it as an output to use in later steps
+          echo "GIT_TAG=$TIMESTAMP" >> $GITHUB_ENV
+
+      - name: Update k8s dev deployments with immutable tag (for argoCD)
+        if: ${{ github.ref == 'refs/heads/dev' }}
+        run: sed -i "s/minfi-services:[^ ]\+/minfi-services:${GIT_TAG}/g" ./deployments/dev/minfi-services.yml
+
+      - name: Commit & push changes to k8s dev deployment yml files
+        if: ${{ github.ref == 'refs/heads/main' }}
+        uses: actions-js/push@master
+        with:
+          messages: Update k8s dev deployment yamls with immutable git tag
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg APPNAME=${{ matrix.app }} \
+            --build-arg BUILDVER=${{ env.VERSION }} \
+            --build-arg COMMITBRANCH=${{ env.BRANCH }} \
+            --build-arg COMMITSHA=${{ github.sha }} \
+            -t ${{ env.DEV_REGISTRY }}/${{ env.APP_LOWERCASE }}:${{ env.GIT_TAG }} \
+            -f ./docker/dev/Dockerfile .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.DEV_REGISTRY }}/${{ env.APP_LOWERCASE }}:${{ env.GIT_TAG }}'
+          ignore-unfixed: true
+          vuln-type: 'os library'
+          severity: 'CRITICAL, HIGH'
+          scanners: 'vuln'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+        continue-on-error: true
+      
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Push image to dev registry
+        run: |
+          docker push ${{ env.DEV_REGISTRY }}/${{ env.APP_LOWERCASE }}:${{ env.GIT_TAG }}
