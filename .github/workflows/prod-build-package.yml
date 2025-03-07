@@ -68,15 +68,15 @@ jobs:
           # Store it as an output to use in later steps
           echo "GIT_TAG=$TIMESTAMP" >> $GITHUB_ENV
 
-      - name: Update k8s dev deployments with immutable tag (for argoCD)
-        if: ${{ github.ref == 'refs/heads/dev' }}
-        run: sed -i "s/minfi-services:[^ ]\+/minfi-services:${GIT_TAG}/g" ./deployments/dev/minfi-services.yml
+      - name: Update k8s deployments with immutable tag (for argoCD)
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: sed -i "s/minfi-services:[^ ]\+/minfi-services:${GIT_TAG}/g" ./deployments/prod/minfi-services.yml
 
-      - name: Commit & push changes to k8s dev deployment yml files
+      - name: Commit & push changes to k8s main deployment yml files
         if: ${{ github.ref == 'refs/heads/main' }}
         uses: actions-js/push@master
         with:
-          messages: Update k8s dev deployment yamls with immutable git tag
+          messages: Update k8s main deployment yamls with immutable git tag
           github_token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Build image
@@ -87,7 +87,7 @@ jobs:
             --build-arg COMMITBRANCH=${{ env.BRANCH }} \
             --build-arg COMMITSHA=${{ github.sha }} \
             -t ${{ env.DEV_REGISTRY }}/${{ env.APP_LOWERCASE }}:${{ env.GIT_TAG }} \
-            -f ./docker/dev/Dockerfile .
+            -f ./docker/prod/Dockerfile .
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
@@ -113,6 +113,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Push image to dev registry
+      - name: Push image to registry
         run: |
           docker push ${{ env.DEV_REGISTRY }}/${{ env.APP_LOWERCASE }}:${{ env.GIT_TAG }}
