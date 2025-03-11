@@ -4,6 +4,9 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  security-events: write  # Required for uploading SARIF results
+
 jobs:
   service:
     name: Build and Package
