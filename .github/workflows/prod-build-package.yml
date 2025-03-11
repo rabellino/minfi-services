@@ -5,7 +5,8 @@ on:
     branches: [ main ]
 
 permissions:
-  security-events: write  # Required for uploading SARIF results
+  security-events: write  # Required for uploading trivy results
+  packages: write # Required for uploading to ghcr.io
 
 jobs:
   service:
