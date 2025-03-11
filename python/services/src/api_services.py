@@ -50,7 +50,7 @@ class APIServices:
         logging.debug('Entering APIService#foo')
         response = {}
         try:
-            response = 'bar'
+            response = "bar"
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.error('Could not build response? : %s', str(exc))
             return create_response({'error': str(exc)}, 500)
